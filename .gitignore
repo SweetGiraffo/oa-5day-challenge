@@ -1,0 +1,4 @@
+node_modules/
+.npm/
+data/challenge_db.json.tmp
+.DS_Store
