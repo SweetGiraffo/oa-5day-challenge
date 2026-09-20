@@ -63,13 +63,24 @@ Visit **[http://localhost:3000](http://localhost:3000)** in your browser.
    ```
 3. They can log in with their roll number and start solving immediately!
 
-### Option B: Free Cloud Deployment (Access from Anywhere)
-Deploy to **Render** or **Railway** in 2 minutes:
-1. Push this folder to a GitHub repository.
-2. Go to [Render.com](https://render.com) -> New **Web Service** -> Connect your GitHub repo.
-3. Build Command: `npm install`
-4. Start Command: `node server.js`
-5. Share the generated `.onrender.com` link with your friends!
+### Option B: Free Cloud Hosting (Permanent, Runs 24/7)
+
+Your repository is published at: **[https://github.com/SweetGiraffo/oa-5day-challenge](https://github.com/SweetGiraffo/oa-5day-challenge)**
+
+You can deploy it for free with 1 click:
+
+1. **Deploy on Render (Recommended for Node.js + Persistent API)**:
+   - Click: **[Deploy to Render](https://render.com/deploy?repo=https://github.com/SweetGiraffo/oa-5day-challenge)**
+   - Sign in with GitHub and click **Apply**.
+   - Render will build and launch your server at `https://<your-app>.onrender.com`.
+
+2. **Deploy on Vercel**:
+   - Click: **[Deploy with Vercel](https://vercel.com/new/clone?repository-url=https://github.com/SweetGiraffo/oa-5day-challenge)**
+   - Connect your GitHub account and click **Deploy**.
+   - Your site will be live instantly on a `.vercel.app` domain.
+
+3. **Deploy on Railway**:
+   - Go to [railway.app](https://railway.app) -> **New Project** -> **Deploy from GitHub repo** -> select `oa-5day-challenge`.
 
 ---
 
