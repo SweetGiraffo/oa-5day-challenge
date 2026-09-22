@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,6 +37,128 @@ function getLocalDateString(d = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+// In-memory cache for ultra-fast synchronous reads
+let cachedDB = null;
+let isPostgresReady = false;
+
+// Initialize PostgreSQL pool if DATABASE_URL is provided
+let pgPool = null;
+if (process.env.DATABASE_URL) {
+  try {
+    const isLocal = process.env.DATABASE_URL.includes('localhost') || process.env.DATABASE_URL.includes('127.0.0.1');
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: isLocal ? false : { rejectUnauthorized: false }
+    });
+    console.log('PostgreSQL configuration detected. Connecting to persistent database...');
+  } catch (err) {
+    console.error('Failed to initialize PostgreSQL pool:', err);
+    pgPool = null;
+  }
+}
+
+// Local File Read
+function readLocalFileDB() {
+  try {
+    if (!fs.existsSync(DB_FILE)) {
+      const initial = {
+        startDate: getLocalDateString(),
+        users: {},
+        activity: []
+      };
+      fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2), 'utf8');
+      return initial;
+    }
+    const raw = fs.readFileSync(DB_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed.startDate) {
+      parsed.startDate = getLocalDateString();
+      writeLocalFileDB(parsed);
+    }
+    return parsed;
+  } catch (err) {
+    console.error('Error reading local DB file:', err);
+    return { startDate: getLocalDateString(), users: {}, activity: [] };
+  }
+}
+
+// Local File Write
+function writeLocalFileDB(data) {
+  try {
+    const tempFile = `${DB_FILE}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf8');
+    fs.renameSync(tempFile, DB_FILE);
+  } catch (err) {
+    console.error('Error writing local DB file:', err);
+  }
+}
+
+// Initialize persistent storage (Postgres or local)
+async function initStorage() {
+  // Preload from local file first
+  cachedDB = readLocalFileDB();
+
+  if (pgPool) {
+    try {
+      // Create table if it does not exist
+      await pgPool.query(`
+        CREATE TABLE IF NOT EXISTS challenge_store (
+          id VARCHAR(50) PRIMARY KEY,
+          data JSONB NOT NULL,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+      `);
+
+      // Retrieve state
+      const res = await pgPool.query('SELECT data FROM challenge_store WHERE id = $1', ['state']);
+      if (res.rows.length > 0 && res.rows[0].data) {
+        cachedDB = res.rows[0].data;
+        console.log('Successfully loaded persistent state from PostgreSQL.');
+      } else {
+        // Seed Postgres with current cached state
+        await pgPool.query(
+          `INSERT INTO challenge_store (id, data, updated_at) 
+           VALUES ($1, $2, NOW()) 
+           ON CONFLICT (id) DO UPDATE SET data = $2, updated_at = NOW()`,
+          ['state', JSON.stringify(cachedDB)]
+        );
+        console.log('Initialized PostgreSQL challenge_store with starting state.');
+      }
+      isPostgresReady = true;
+    } catch (err) {
+      console.error('Error connecting to PostgreSQL. Using local file storage fallback:', err.message);
+      isPostgresReady = false;
+    }
+  } else {
+    console.log('Running with local file storage (DATABASE_URL not set).');
+  }
+}
+
+// Helper to read DB (fast memory read)
+function readDB() {
+  if (!cachedDB) {
+    cachedDB = readLocalFileDB();
+  }
+  return cachedDB;
+}
+
+// Helper to write DB (updates memory, local file, and Postgres asynchronously)
+function writeDB(data) {
+  cachedDB = data;
+  writeLocalFileDB(data);
+
+  if (pgPool && isPostgresReady) {
+    pgPool.query(
+      `INSERT INTO challenge_store (id, data, updated_at) 
+       VALUES ($1, $2, NOW()) 
+       ON CONFLICT (id) DO UPDATE SET data = $2, updated_at = NOW()`,
+      ['state', JSON.stringify(data)]
+    ).catch(err => {
+      console.error('Failed to sync state to PostgreSQL:', err.message);
+    });
+  }
+}
+
 // Calculate unlocked day (1 to 5)
 function calculateUnlockedDay(startDateStr) {
   if (!startDateStr) return 1;
@@ -52,42 +175,6 @@ function calculateUnlockedDay(startDateStr) {
   if (currentDay < 1) return 1;
   if (currentDay > 5) return 5;
   return currentDay;
-}
-
-// Helper to read DB
-function readDB() {
-  try {
-    if (!fs.existsSync(DB_FILE)) {
-      const initial = {
-        startDate: getLocalDateString(),
-        users: {},
-        activity: []
-      };
-      fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2), 'utf8');
-      return initial;
-    }
-    const raw = fs.readFileSync(DB_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (!parsed.startDate) {
-      parsed.startDate = getLocalDateString();
-      writeDB(parsed);
-    }
-    return parsed;
-  } catch (err) {
-    console.error('Error reading DB:', err);
-    return { startDate: getLocalDateString(), users: {}, activity: [] };
-  }
-}
-
-// Helper to write DB atomically
-function writeDB(data) {
-  try {
-    const tempFile = `${DB_FILE}.tmp`;
-    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf8');
-    fs.renameSync(tempFile, DB_FILE);
-  } catch (err) {
-    console.error('Error writing DB:', err);
-  }
 }
 
 // Validate Roll Number
@@ -116,7 +203,8 @@ app.get('/api/config', (req, res) => {
     serverToday: getLocalDateString(),
     currentUnlockedDay: unlockedDay,
     totalDays: 5,
-    questionsPerDay: 10
+    questionsPerDay: 10,
+    storageType: isPostgresReady ? 'postgresql' : 'local_file'
   });
 });
 
@@ -125,9 +213,8 @@ app.get('/api/problems', (req, res) => {
   const db = readDB();
   const unlockedDay = calculateUnlockedDay(db.startDate);
 
-  // Count how many users solved each problem
   const solveCounts = {};
-  for (const user of Object.values(db.users)) {
+  for (const user of Object.values(db.users || {})) {
     if (user.solved) {
       for (const qId of Object.keys(user.solved)) {
         solveCounts[qId] = (solveCounts[qId] || 0) + 1;
@@ -172,6 +259,8 @@ app.post('/api/auth/login', (req, res) => {
   const cleanName = name.trim();
 
   const db = readDB();
+  if (!db.users) db.users = {};
+
   const now = new Date().toISOString();
 
   if (!db.users[cleanRoll]) {
@@ -209,7 +298,7 @@ app.post('/api/progress/toggle', (req, res) => {
   const cleanRoll = rollNo.trim().toLowerCase();
   const db = readDB();
 
-  if (!db.users[cleanRoll]) {
+  if (!db.users || !db.users[cleanRoll]) {
     return res.status(404).json({ success: false, message: 'User not found. Please log in first.' });
   }
 
@@ -218,7 +307,6 @@ app.post('/api/progress/toggle', (req, res) => {
     return res.status(404).json({ success: false, message: 'Problem not found.' });
   }
 
-  // Check if problem is unlocked
   const unlockedDay = calculateUnlockedDay(db.startDate);
   if (problem.day > unlockedDay) {
     return res.status(403).json({
@@ -268,7 +356,7 @@ app.post('/api/progress/toggle', (req, res) => {
 // 5. Leaderboard
 app.get('/api/leaderboard', (req, res) => {
   const db = readDB();
-  const usersList = Object.values(db.users);
+  const usersList = Object.values(db.users || {});
 
   const leaderboard = usersList.map(u => {
     const solvedMap = u.solved || {};
@@ -328,7 +416,7 @@ app.get('/api/leaderboard', (req, res) => {
 app.get('/api/users/:rollNo', (req, res) => {
   const cleanRoll = req.params.rollNo.trim().toLowerCase();
   const db = readDB();
-  const user = db.users[cleanRoll];
+  const user = (db.users || {})[cleanRoll];
 
   if (!user) {
     return res.status(404).json({ success: false, message: 'User not found.' });
@@ -361,7 +449,7 @@ app.get('/api/activity', (req, res) => {
 // 8. Overall stats
 app.get('/api/stats', (req, res) => {
   const db = readDB();
-  const users = Object.values(db.users);
+  const users = Object.values(db.users || {});
   let totalSolves = 0;
 
   users.forEach(u => {
@@ -377,11 +465,14 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
-// Reset initial DB if needed
+// Catch-all
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`OA Practice Platform running on http://localhost:${PORT}`);
+// Start server after initializing storage
+initStorage().then(() => {
+  app.listen(PORT, () => {
+    console.log(`OA Practice Platform running on http://localhost:${PORT}`);
+  });
 });
