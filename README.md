@@ -63,24 +63,28 @@ Visit **[http://localhost:3000](http://localhost:3000)** in your browser.
    ```
 3. They can log in with their roll number and start solving immediately!
 
-### Option B: Free Cloud Hosting (Permanent, Runs 24/7)
+### Option B: Free Cloud Hosting with Permanent Data Storage
 
-Your repository is published at: **[https://github.com/SweetGiraffo/oa-5day-challenge](https://github.com/SweetGiraffo/oa-5day-challenge)**
+On Render's free tier, the file system is **ephemeral** (Render wipes the local disk whenever the app sleeps or relaunches). To make sure all challenger logins, scores, and timestamps are **permanently saved across all restarts**, the server automatically connects to **PostgreSQL** whenever `DATABASE_URL` is set.
 
-You can deploy it for free with 1 click:
+#### Quick 2-Minute Setup for Permanent Storage on Render:
 
-1. **Deploy on Render (Recommended for Node.js + Persistent API)**:
-   - Click: **[Deploy to Render](https://render.com/deploy?repo=https://github.com/SweetGiraffo/oa-5day-challenge)**
-   - Sign in with GitHub and click **Apply**.
-   - Render will build and launch your server at `https://<your-app>.onrender.com`.
+1. **Create a Free PostgreSQL Database on Render**:
+   - In your [Render Dashboard](https://dashboard.render.com), click **New +** -> **PostgreSQL**.
+   - Give it any name (e.g. `oa-db`) and choose the **Free** instance type.
+   - Click **Create Database**.
 
-2. **Deploy on Vercel**:
-   - Click: **[Deploy with Vercel](https://vercel.com/new/clone?repository-url=https://github.com/SweetGiraffo/oa-5day-challenge)**
-   - Connect your GitHub account and click **Deploy**.
-   - Your site will be live instantly on a `.vercel.app` domain.
+2. **Connect it to your Web Service**:
+   - On the database page, copy the **Internal Database URL** (e.g. `postgres://oachallenge:...@dpg-...-a/oachallenge`).
+   - Go to your Web Service in Render -> click the **Environment** tab.
+   - Click **Add Environment Variable**:
+     - Key: `DATABASE_URL`
+     - Value: *(paste the copied internal database URL)*
+   - Click **Save Changes**.
 
-3. **Deploy on Railway**:
-   - Go to [railway.app](https://railway.app) -> **New Project** -> **Deploy from GitHub repo** -> select `oa-5day-challenge`.
+Render will automatically redeploy. Your platform now has permanent, ACID-compliant cloud storage that **never forgets any data** when it sleeps, wakes up, or relaunches!
+
+*(Alternative: You can also use a free serverless database from [Neon.tech](https://neon.tech) or [Supabase.com](https://supabase.com) by pasting its connection string into `DATABASE_URL`).*
 
 ---
 
